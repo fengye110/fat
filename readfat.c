@@ -9,6 +9,7 @@
 
 /*#define MBR_FS_TYPE_OFFSET */
 #define MBR_SECTOR_SIZE_OFFSET 0x0B
+#define MBR_MAX_ENTRY_ITEMS 0x11
 #define MBR_FAT_OFFSET 0x0E
 #define MBR_FAT_CNT_OFFSET 0x10
 #define MBR_SECTOR_PER_FAT 0x16
@@ -18,6 +19,13 @@
 #define ENTRY_CLUSTER_OFFSET 0x1A
 #define ENTRY_FSIZE_OFFSET 0x1C
 #define ENTRY_SIZE 32
+
+unsigned short mbr_max_entry_items(char *baseaddr)
+{
+    unsigned short ret;
+    ret = *((unsigned short *)(baseaddr + MBR_MAX_ENTRY_ITEMS));
+    return ret;
+}
 
 unsigned short mbr_sector_size(char *baseaddr)
 {
@@ -60,6 +68,22 @@ char *mbr_entrys(char * baseaddr)
     ret =  mbr_fat(baseaddr) + mbr_fat_cnt(baseaddr) * mbr_sectors_peer_fat(baseaddr) * mbr_sector_size(baseaddr);
     return ret;
 #endif
+}
+char * cluster_2(char *baseaddr)
+{
+    char *ret;
+    ret = mbr_entrys(baseaddr);
+    return ret + mbr_max_entry_items(baseaddr) * 32;
+}
+
+int cluster_size(char *baseaddr)
+{
+	return mbr_sectors_peer_cluster(baseaddr) * mbr_sector_size(baseaddr);
+}
+
+char * cluster_addr(char *baseaddr, int cluster)
+{
+	return cluster_2(baseaddr) + (cluster - 2) * cluster_size(baseaddr);
 }
 int entry_is_null(char *entry)
 {
@@ -104,14 +128,19 @@ int is_endofile(unsigned int cluster)
     return 0;
 }
 
-int read_content(void *dst, void *src, size_t cnt, unsigned int cluster)
+int read_content(char *dst, char *src, size_t cnt, unsigned int cluster)
 {
     int clustersize;
-    int offset;
-    clustersize = mbr_sectors_peer_cluster(src) * mbr_sector_size(src);
-    offset = clustersize * cluster;
-    printf("[read_content] cluster=%d,clustersize=%d, cnt=%d, offset=%d\n", cluster, clustersize, cnt, offset);
-    memcpy(dst, src + offset, cnt);
+    char *vptr;
+    //char *k;
+    //k = calloc(cnt + 1, 1);
+    clustersize = cluster_size(src);
+    vptr = cluster_addr(src, cluster);
+    printf("[read_content] cluster=%d,clustersize=%d, cnt=%d, offset=%x\n", cluster, clustersize, cnt, vptr - src);
+    //memcpy(k, vptr, cnt);
+    memcpy(dst, vptr, cnt);
+    //printf(stderr, "%s",k);
+    //free(k);
     return cnt;
 }
 
@@ -140,7 +169,6 @@ char * do_job(int *fsize, char *inbuf)
     char *fbuf;
     int cnt, ret;
     char *pret;
-    int cluster_size;
 
     // debug
     ret = mbr_sector_size(inbuf);
@@ -193,8 +221,7 @@ char * do_job(int *fsize, char *inbuf)
     fbuf = malloc(filesize);
     cnt = 0;
     while (is_endofile(cluster) != 1) {
-        cluster_size = mbr_sectors_peer_cluster(inbuf) * mbr_sector_size(inbuf);
-        read_content(fbuf + cnt, inbuf, min(filesize - cnt, cluster_size), cluster);
+        cnt += read_content(fbuf + cnt, inbuf, min(filesize - cnt, cluster_size(inbuf)), cluster);
         cluster = next_cluster(fat_base, cluster);
     }
     *fsize = filesize;
